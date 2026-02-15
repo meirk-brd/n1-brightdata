@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=65"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "n1-brightdata"
+version = "0.1.0"
+description = "CLI browser agent using n1 with Bright Data Scraping Browser."
+requires-python = ">=3.10"
+dependencies = [
+  "openai",
+  "playwright",
+  "click",
+  "python-dotenv",
+  "rich>=13.0",
+]
+
+[project.scripts]
+n1-brightdata = "n1_brightdata.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
