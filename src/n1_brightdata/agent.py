@@ -7,6 +7,11 @@ from typing import Any
 
 from openai import APIStatusError, OpenAI
 from playwright.sync_api import sync_playwright
+from yutori.n1.payload import (
+    DEFAULT_KEEP_RECENT_SCREENSHOTS,
+    DEFAULT_MAX_REQUEST_BYTES,
+    trim_images_to_fit,
+)
 
 from .console import (
     print_banner,
@@ -23,8 +28,6 @@ from .console import (
 DEFAULT_MODEL = "n1-latest"
 DEFAULT_VIEWPORT_W = 1280
 DEFAULT_VIEWPORT_H = 800
-DEFAULT_MAX_REQUEST_BYTES = 9_500_000
-DEFAULT_KEEP_RECENT_SCREENSHOTS = 6
 DEFAULT_SCREENSHOT_FORMAT = "jpeg"
 DEFAULT_JPEG_QUALITY = 60
 DEFAULT_ENABLE_SUFFICIENCY_CHECK = True
@@ -119,6 +122,13 @@ def load_env(env_file: str | Path | None = None) -> None:
 def get_required_env(name: str, provided: str | None = None) -> str:
     value = (provided if provided is not None else os.environ.get(name) or "").strip()
     if not value or value == "YOUR_API_KEY":
+        # Env var is empty/placeholder – try credentials saved by `yutori auth login`
+        if name == "YUTORI_API_KEY":
+            from yutori.auth import resolve_api_key
+
+            sdk_key = resolve_api_key()
+            if sdk_key:
+                return sdk_key
         raise RuntimeError(f"Missing {name}. Set it in the shell or in .env.")
     return value
 
@@ -219,90 +229,6 @@ def screenshot_b64(page: Any, config: AgentConfig) -> str:
         screenshot_kwargs["quality"] = config.jpeg_quality
     img_bytes = page.screenshot(**screenshot_kwargs)
     return base64.b64encode(img_bytes).decode("utf-8")
-
-
-def estimate_messages_size_bytes(messages: list[dict[str, Any]]) -> int:
-    return len(
-        json.dumps(messages, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    )
-
-
-def message_has_image(message: dict[str, Any]) -> bool:
-    content = message.get("content")
-    if not isinstance(content, list):
-        return False
-    return any(isinstance(part, dict) and part.get("type") == "image_url" for part in content)
-
-
-def strip_one_image_from_message(message: dict[str, Any]) -> bool:
-    content = message.get("content")
-    if not isinstance(content, list):
-        return False
-
-    removed = False
-    new_content = []
-    for part in content:
-        if not removed and isinstance(part, dict) and part.get("type") == "image_url":
-            removed = True
-            continue
-        new_content.append(part)
-
-    if not removed:
-        return False
-
-    has_text = any(
-        isinstance(part, dict) and part.get("type") == "text" for part in new_content
-    )
-    if not has_text:
-        new_content.append(
-            {
-                "type": "text",
-                "text": "Screenshot omitted to stay under request size limit.",
-            }
-        )
-    message["content"] = new_content
-    return True
-
-
-def trim_images_to_fit(
-    messages: list[dict[str, Any]],
-    *,
-    max_bytes: int,
-    keep_recent: int,
-) -> tuple[int, int]:
-    size_bytes = estimate_messages_size_bytes(messages)
-    if size_bytes <= max_bytes:
-        return size_bytes, 0
-
-    image_indices = [i for i, msg in enumerate(messages) if message_has_image(msg)]
-    if not image_indices:
-        return size_bytes, 0
-
-    keep_recent = max(1, keep_recent)
-    protected = set(image_indices[-keep_recent:])
-    protected.add(image_indices[-1])
-    removed = 0
-
-    for idx in image_indices:
-        if size_bytes <= max_bytes:
-            break
-        if idx in protected:
-            continue
-        if strip_one_image_from_message(messages[idx]):
-            removed += 1
-            size_bytes = estimate_messages_size_bytes(messages)
-
-    if size_bytes > max_bytes:
-        for idx in image_indices:
-            if size_bytes <= max_bytes:
-                break
-            if idx == image_indices[-1]:
-                continue
-            if strip_one_image_from_message(messages[idx]):
-                removed += 1
-                size_bytes = estimate_messages_size_bytes(messages)
-
-    return size_bytes, removed
 
 
 def to_abs(coords_1000: tuple[int, int], config: AgentConfig) -> tuple[int, int]:
