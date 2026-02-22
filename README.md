@@ -2,9 +2,10 @@
 
 <br />
 
-<img src="https://mintlify.s3.us-west-1.amazonaws.com/brightdata/logo/dark.svg" alt="Bright Data Logo" height="40" />
+<img width="81" height="81" alt="image" src="https://github.com/user-attachments/assets/c997c90b-5208-4be2-93dd-2ef3714db32d" />
 &nbsp;&nbsp;&nbsp;
-<img src="https://yutori.com/favicon.ico" alt="Yutori Logo" height="40" />
+<img width="81" height="81" alt="image" src="https://github.com/user-attachments/assets/de530e7f-2f3b-43b9-be7e-76077280be7f" />
+
 
 <br />
 <br />
