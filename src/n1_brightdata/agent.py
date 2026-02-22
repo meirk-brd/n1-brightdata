@@ -328,6 +328,56 @@ def n1_step(messages: list[dict[str, Any]], *, client: OpenAI, config: AgentConf
         raise
 
 
+def _extract_response_error_detail(resp: Any) -> str | None:
+    def _field(obj: Any, key: str) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(key)
+        return getattr(obj, key, None)
+
+    def _text(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        value = value.strip()
+        return value or None
+
+    detail = _text(_field(resp, "detail"))
+    if detail:
+        return detail
+
+    error = _field(resp, "error")
+    if isinstance(error, dict):
+        nested = _text(error.get("message")) or _text(error.get("detail"))
+        if nested:
+            return nested
+    else:
+        nested = _text(_field(error, "message")) or _text(error)
+        if nested:
+            return nested
+
+    return _text(_field(resp, "message"))
+
+
+def _first_choice_message(resp: Any, *, context: str) -> Any:
+    if resp is None:
+        raise RuntimeError(f"{context} returned no response.")
+
+    choices = getattr(resp, "choices", None)
+    if not isinstance(choices, list) or not choices:
+        detail = _extract_response_error_detail(resp)
+        base_msg = (
+            f"{context} did not include completion choices. "
+            "The API likely returned an error payload instead of a chat completion."
+        )
+        if detail:
+            raise RuntimeError(f"{base_msg} API detail: {detail}")
+        raise RuntimeError(base_msg)
+
+    message = getattr(choices[0], "message", None)
+    if message is None:
+        raise RuntimeError(f"{context} returned a choice without a message.")
+    return message
+
+
 def _content_to_text(content: Any) -> str:
     if content is None:
         return ""
@@ -409,7 +459,11 @@ def maybe_finalize_early(
     except Exception:
         return None
 
-    judge_text = _content_to_text(resp.choices[0].message.content)
+    try:
+        judge_msg = _first_choice_message(resp, context="Sufficiency check response")
+    except RuntimeError:
+        return None
+    judge_text = _content_to_text(judge_msg.content)
     parsed = _parse_json_object(judge_text)
     if not parsed:
         return None
@@ -488,7 +542,7 @@ def run_agent(
         for step in range(1, max_steps + 1):
             with status_spinner(f"Step {step}/{max_steps} Thinking..."):
                 resp = n1_step(messages, client=client, config=config)
-            msg = resp.choices[0].message
+            msg = _first_choice_message(resp, context=f"Agent step {step} response")
             tool_calls = getattr(msg, "tool_calls", None) or []
             assistant_text = _content_to_text(msg.content)
 
