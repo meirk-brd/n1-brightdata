@@ -126,18 +126,27 @@ Run the built-in setup wizard. It walks you through every credential, saves them
 n1-brightdata setup
 ```
 
-### Option B — Manual `.env` File
+### Option B — Manual `credentials.json`
 
-Create a `.env` file in the project root:
+Create the file at `~/.n1-brightdata/credentials.json`:
 
 ```bash
-# .env
+mkdir -p ~/.n1-brightdata
+cat > ~/.n1-brightdata/credentials.json << 'EOF'
+{
+  "YUTORI_API_KEY": "your_yutori_api_key_here",
+  "BRD_CDP_URL": "wss://brd-customer-XXXXXX-zone-scraping_browser:PASSWORD@brd.superproxy.io:9222"
+}
+EOF
+chmod 600 ~/.n1-brightdata/credentials.json
+```
 
-# ── Required ────────────────────────────────────────────────────────────────
-YUTORI_API_KEY=your_yutori_api_key_here
-BRD_CDP_URL=wss://brd-customer-XXXXXX-zone-scraping_browser:PASSWORD@brd.superproxy.io:9222
+### Optional Tuning (project-level)
 
-# ── Optional tuning ─────────────────────────────────────────────────────────
+Tuning parameters stay in a local `.env` file or shell environment — they are not stored in `credentials.json`:
+
+```bash
+# .env  (in your project directory, or export in your shell)
 N1_SCREENSHOT_FORMAT=jpeg          # jpeg | png
 N1_JPEG_QUALITY=60                 # 1–100
 N1_MAX_REQUEST_BYTES=9500000       # trim old screenshots if payload exceeds this
@@ -149,7 +158,7 @@ N1_STOP_CONFIDENCE_THRESHOLD=0.78  # confidence threshold for early stopping (0�
 ### Configuration Precedence
 
 ```
-CLI flags  >  Environment variables  >  .env file  >  Built-in defaults
+CLI flags  >  Shell env vars  >  .env file (tuning)  >  ~/.n1-brightdata/credentials.json
 ```
 
 ---

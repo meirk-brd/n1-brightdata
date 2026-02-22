@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import subprocess
 import sys
 
@@ -8,6 +9,8 @@ from rich.prompt import Confirm, Prompt
 
 from .agent import build_agent_config, run_agent
 from .console import console, print_error, status_spinner
+
+CREDENTIALS_PATH = Path.home() / ".n1-brightdata" / "credentials.json"
 
 
 class DefaultRunGroup(click.Group):
@@ -116,42 +119,24 @@ def _wizard_step_header(step: int, total: int, title: str) -> None:
     console.print()
 
 
-def _read_existing_env(env_path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    if not env_path.exists():
-        return values
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if stripped.startswith("export "):
-            stripped = stripped[len("export "):].strip()
-        if "=" not in stripped:
-            continue
-        key, val = stripped.split("=", 1)
-        key = key.strip()
-        val = val.strip()
-        if len(val) >= 2 and val[0] == val[-1] and val[0] in {"'", '"'}:
-            val = val[1:-1]
-        values[key] = val
-    return values
+def _read_credentials() -> dict[str, str]:
+    if not CREDENTIALS_PATH.exists():
+        return {}
+    try:
+        data = json.loads(CREDENTIALS_PATH.read_text(encoding="utf-8"))
+        return {k: v for k, v in data.items() if isinstance(v, str)}
+    except Exception:
+        return {}
 
 
-def _write_env(env_path: Path, values: dict[str, str]) -> None:
-    lines: list[str] = ["# Required credentials"]
-    lines.append(f"YUTORI_API_KEY={values.get('YUTORI_API_KEY', '')}")
-    lines.append(f"BRD_CDP_URL={values.get('BRD_CDP_URL', '')}")
-    lines.append("")
-    optional = [
-        k for k in values
-        if k not in ("YUTORI_API_KEY", "BRD_CDP_URL")
-    ]
-    if optional:
-        lines.append("# Optional runtime tuning")
-        for k in optional:
-            lines.append(f"{k}={values[k]}")
-        lines.append("")
-    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+def _write_credentials(values: dict[str, str]) -> None:
+    CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "YUTORI_API_KEY": values.get("YUTORI_API_KEY", ""),
+        "BRD_CDP_URL": values.get("BRD_CDP_URL", ""),
+    }
+    CREDENTIALS_PATH.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    CREDENTIALS_PATH.chmod(0o600)
 
 
 def _mask(value: str) -> str:
@@ -188,7 +173,6 @@ def _test_brightdata(cdp_url: str) -> bool:
 def setup() -> None:
     """Interactive setup wizard -- credentials, Playwright, and connectivity."""
     total = 5
-    env_path = Path.cwd() / ".env"
 
     # Banner
     console.print()
@@ -200,7 +184,7 @@ def setup() -> None:
         )
     )
 
-    env_values = _read_existing_env(env_path)
+    env_values = _read_credentials()
 
     # -- Step 1: Bright Data ------------------------------------------------
     _wizard_step_header(1, total, "Bright Data Scraping Browser")
@@ -241,9 +225,9 @@ def setup() -> None:
 
     _wizard_step_header(3, total, "Save Configuration")
 
-    with status_spinner("Writing credentials to .env..."):
-        _write_env(env_path, env_values)
-    console.print(f"  [success]Saved .env[/success] at [muted]{env_path}[/muted]")
+    with status_spinner("Writing credentials..."):
+        _write_credentials(env_values)
+    console.print(f"  [success]Saved credentials[/success] to [muted]{CREDENTIALS_PATH}[/muted]")
 
     _wizard_step_header(4, total, "Install Playwright")
 

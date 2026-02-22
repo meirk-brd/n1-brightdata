@@ -83,21 +83,30 @@ class AgentConfig:
         return self.brd_cdp_url
 
 
-def _resolve_env_path(env_file: str | Path | None) -> Path:
-    if env_file is None:
-        return Path.cwd() / ".env"
+CREDENTIALS_PATH = Path.home() / ".n1-brightdata" / "credentials.json"
+
+
+def _load_global_credentials() -> None:
+    """Inject credentials from ~/.n1-brightdata/credentials.json into os.environ."""
+    if not CREDENTIALS_PATH.exists():
+        return
+    try:
+        data = json.loads(CREDENTIALS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    for key in ("YUTORI_API_KEY", "BRD_CDP_URL"):
+        value = data.get(key, "")
+        if isinstance(value, str) and value.strip():
+            os.environ.setdefault(key, value.strip())
+
+
+def _load_env_file(env_file: str | Path) -> None:
+    """Load a .env file into os.environ (for optional tuning vars)."""
     env_path = Path(env_file).expanduser()
     if not env_path.is_absolute():
         env_path = (Path.cwd() / env_path).resolve()
-    return env_path
-
-
-def load_env(env_file: str | Path | None = None) -> None:
-    """Load .env values into process env if they're not already set."""
-    env_path = _resolve_env_path(env_file)
     if not env_path.exists():
         return
-
     try:
         from dotenv import load_dotenv
     except Exception:
@@ -106,7 +115,7 @@ def load_env(env_file: str | Path | None = None) -> None:
             if not line or line.startswith("#"):
                 continue
             if line.startswith("export "):
-                line = line[len("export ") :].strip()
+                line = line[len("export "):].strip()
             if "=" not in line:
                 continue
             key, value = line.split("=", 1)
@@ -117,6 +126,17 @@ def load_env(env_file: str | Path | None = None) -> None:
             os.environ.setdefault(key, value)
     else:
         load_dotenv(dotenv_path=env_path, override=False)
+
+
+def load_env(env_file: str | Path | None = None) -> None:
+    """Load credentials from ~/.n1-brightdata/credentials.json, then optionally a .env file."""
+    _load_global_credentials()
+    if env_file is not None:
+        _load_env_file(env_file)
+    else:
+        local_env = Path.cwd() / ".env"
+        if local_env.exists():
+            _load_env_file(local_env)
 
 
 def get_required_env(name: str, provided: str | None = None) -> str:
