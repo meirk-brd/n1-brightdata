@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "CLI browser agent using n1 with Bright Data Scraping Browser."
 requires-python = ">=3.10"
 dependencies = [
+  "yutori>=0.4.0",
   "openai",
   "playwright",
   "click",
