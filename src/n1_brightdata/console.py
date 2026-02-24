@@ -102,5 +102,9 @@ def print_error(message: str) -> None:
     )
 
 
+def print_warning(message: str) -> None:
+    console.print(f"[warning]{escape(message)}[/warning]")
+
+
 def status_spinner(message: str) -> "Console.status":
     return console.status(message, spinner="dots")

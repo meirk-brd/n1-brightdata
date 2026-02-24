@@ -4,9 +4,14 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 from openai import APIStatusError, OpenAI
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import (
+    Error as PlaywrightError,
+    TimeoutError as PlaywrightTimeoutError,
+    sync_playwright,
+)
 from yutori.n1.payload import (
     DEFAULT_KEEP_RECENT_SCREENSHOTS,
     DEFAULT_MAX_REQUEST_BYTES,
@@ -23,6 +28,7 @@ from .console import (
     print_step,
     print_tool_action,
     print_trim_notice,
+    print_warning,
     status_spinner,
 )
 
@@ -258,12 +264,18 @@ def create_client(config: AgentConfig) -> OpenAI:
     )
 
 
-def screenshot_b64(page: Any, config: AgentConfig) -> str:
+def screenshot_b64(page: Any, config: AgentConfig, *, timeout_ms: int | None = None) -> str:
     page.set_viewport_size({"width": config.viewport_w, "height": config.viewport_h})
     screenshot_kwargs = {"type": config.screenshot_format}
     if config.screenshot_format == "jpeg":
         screenshot_kwargs["quality"] = config.jpeg_quality
-    screenshot_kwargs["timeout"] = config.screenshot_timeout_ms
+    screenshot_kwargs["timeout"] = (
+        max(1, int(timeout_ms))
+        if timeout_ms is not None
+        else config.screenshot_timeout_ms
+    )
+    screenshot_kwargs["animations"] = "disabled"
+    screenshot_kwargs["caret"] = "hide"
     img_bytes = page.screenshot(**screenshot_kwargs)
     return base64.b64encode(img_bytes).decode("utf-8")
 
@@ -274,6 +286,25 @@ def to_abs(coords_1000: tuple[int, int], config: AgentConfig) -> tuple[int, int]
     x = round((x1000 / 1000) * config.viewport_w)
     y = round((y1000 / 1000) * config.viewport_h)
     return x, y
+
+
+def _alternate_www_url(url: str) -> str | None:
+    parsed = urlparse(url)
+    host = parsed.netloc.strip()
+    if not host:
+        return None
+    if host.startswith("www."):
+        alt_host = host[4:]
+    else:
+        alt_host = f"www.{host}"
+    if alt_host == host:
+        return None
+    return urlunparse(parsed._replace(netloc=alt_host))
+
+
+def _is_navigation_cooldown_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "cannot navigate to this domain again due to cooldown" in text or "no_peers" in text
 
 
 def run_tool(page: Any, tool_name: str, args: dict[str, Any], config: AgentConfig) -> None:
@@ -323,7 +354,17 @@ def run_tool(page: Any, tool_name: str, args: dict[str, Any], config: AgentConfi
     elif tool_name == "key_press":
         page.keyboard.press(args["key_comb"])
     elif tool_name == "goto_url":
-        page.goto(args["url"], wait_until="domcontentloaded")
+        target_url = args["url"]
+        try:
+            page.goto(target_url, wait_until="domcontentloaded")
+        except PlaywrightError as exc:
+            if not _is_navigation_cooldown_error(exc):
+                raise
+            alt_url = _alternate_www_url(target_url)
+            if not alt_url or alt_url == target_url:
+                raise
+            page.wait_for_timeout(1200)
+            page.goto(alt_url, wait_until="domcontentloaded")
     elif tool_name == "go_back":
         page.go_back(wait_until="domcontentloaded")
     elif tool_name == "refresh":
@@ -595,7 +636,30 @@ def run_agent(
         page.set_viewport_size({"width": config.viewport_w, "height": config.viewport_h})
         page.goto(start_url, wait_until="domcontentloaded")
 
-        b64 = screenshot_b64(page, config)
+        try:
+            b64 = screenshot_b64(page, config)
+        except PlaywrightTimeoutError as exc:
+            retry_timeout = max(
+                config.screenshot_timeout_ms + 30_000,
+                int(config.screenshot_timeout_ms * 1.5),
+            )
+            try:
+                b64 = screenshot_b64(page, config, timeout_ms=retry_timeout)
+                print_warning(
+                    f"Initial screenshot timed out at {config.screenshot_timeout_ms}ms; "
+                    f"captured after retry at {retry_timeout}ms."
+                )
+            except PlaywrightTimeoutError as retry_exc:
+                raise RuntimeError(
+                    "Initial screenshot timed out twice "
+                    f"({config.screenshot_timeout_ms}ms, then {retry_timeout}ms). "
+                    "Try increasing --screenshot-timeout-ms or using a lighter start URL."
+                ) from retry_exc
+            except Exception as retry_exc:
+                raise RuntimeError(
+                    f"Initial screenshot retry failed: {type(retry_exc).__name__}: {retry_exc}"
+                ) from retry_exc
+        last_good_screenshot_b64 = b64
         messages: list[dict[str, Any]] = [
             {
                 "role": "system",
@@ -656,9 +720,55 @@ def run_agent(
                 tool_name = tc.function.name
                 args = json.loads(tc.function.arguments)
                 print_tool_action(tool_name, _tool_args_summary(tool_name, args))
-                run_tool(page, tool_name, args, config)
+                tool_error = ""
+                try:
+                    run_tool(page, tool_name, args, config)
+                except Exception as exc:
+                    tool_error = f"{type(exc).__name__}: {exc}"
+                    print_warning(
+                        f"Tool {tool_name} failed; continuing. {type(exc).__name__}: {exc}"
+                    )
 
-                b64_new = screenshot_b64(page, config)
+                b64_new = last_good_screenshot_b64
+                screenshot_note = ""
+                try:
+                    b64_new = screenshot_b64(page, config)
+                    last_good_screenshot_b64 = b64_new
+                except PlaywrightTimeoutError:
+                    retry_timeout = max(
+                        5_000,
+                        min(20_000, max(1, config.screenshot_timeout_ms // 3)),
+                    )
+                    try:
+                        b64_new = screenshot_b64(page, config, timeout_ms=retry_timeout)
+                        last_good_screenshot_b64 = b64_new
+                        screenshot_note = (
+                            "\nScreenshot capture recovered after a timeout retry."
+                        )
+                        print_warning(
+                            f"Screenshot timed out at {config.screenshot_timeout_ms}ms; "
+                            f"recovered with retry at {retry_timeout}ms."
+                        )
+                    except Exception:
+                        b64_new = last_good_screenshot_b64
+                        screenshot_note = (
+                            "\nScreenshot capture timed out; previous screenshot reused."
+                        )
+                        print_warning(
+                            f"Screenshot timed out at {config.screenshot_timeout_ms}ms; "
+                            "reusing previous screenshot."
+                        )
+                except Exception as exc:
+                    b64_new = last_good_screenshot_b64
+                    screenshot_note = (
+                        f"\nScreenshot capture failed ({type(exc).__name__}); previous "
+                        "screenshot reused."
+                    )
+                    print_warning(
+                        f"Screenshot failed ({type(exc).__name__}); "
+                        "reusing previous screenshot."
+                    )
+                tool_error_note = f"\nTool error: {tool_error}" if tool_error else ""
                 messages.append(
                     {
                         "role": "tool",
@@ -666,7 +776,11 @@ def run_agent(
                         "content": [
                             {
                                 "type": "text",
-                                "text": f"[Steps remaining: {remaining}]\nCurrent URL: {page.url}",
+                                "text": (
+                                    f"[Steps remaining: {remaining}]\nCurrent URL: {page.url}"
+                                    f"{tool_error_note}"
+                                    f"{screenshot_note}"
+                                ),
                             },
                             {
                                 "type": "image_url",
