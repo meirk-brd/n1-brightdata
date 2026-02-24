@@ -25,6 +25,7 @@ from .console import (
     print_early_stop,
     print_error,
     print_final_answer,
+    print_inspect_url,
     print_step,
     print_tool_action,
     print_trim_notice,
@@ -622,6 +623,7 @@ def run_agent(
     start_url: str,
     config: AgentConfig,
     max_steps: int = 30,
+    show_inspect_url: bool = False,
 ) -> None:
     print_banner()
     print_config_summary(task, start_url, max_steps, config.model)
@@ -632,6 +634,25 @@ def run_agent(
         browser = p.chromium.connect_over_cdp(config.cdp_wss)
         context = browser.contexts[0] if browser.contexts else browser.new_context()
         page = context.pages[0] if context.pages else context.new_page()
+
+        if show_inspect_url:
+            try:
+                cdp_client = page.context.new_cdp_session(page)
+                frame_tree = cdp_client.send("Page.getFrameTree", {})
+                frame_id = (
+                    ((frame_tree or {}).get("frameTree") or {}).get("frame") or {}
+                ).get("id")
+                if not isinstance(frame_id, str) or not frame_id:
+                    raise RuntimeError("frame id not found")
+                inspect = cdp_client.send("Page.inspect", {"frameId": frame_id})
+                inspect_url = (inspect or {}).get("url")
+                if not isinstance(inspect_url, str) or not inspect_url.strip():
+                    raise RuntimeError("inspect url not found")
+                print_inspect_url(inspect_url.strip())
+            except Exception as exc:
+                print_warning(
+                    f"Could not create inspect URL: {type(exc).__name__}: {exc}"
+                )
 
         page.set_viewport_size({"width": config.viewport_w, "height": config.viewport_h})
         page.goto(start_url, wait_until="domcontentloaded")

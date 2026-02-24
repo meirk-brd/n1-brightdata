@@ -70,6 +70,12 @@ def main() -> None:
     help="Timeout for Playwright page screenshots in milliseconds.",
 )
 @click.option(
+    "--show-inspect-url",
+    is_flag=True,
+    default=False,
+    help="Print a DevTools inspect URL for the live browser session.",
+)
+@click.option(
     "--yutori-api-key",
     envvar="YUTORI_API_KEY",
     show_envvar=True,
@@ -96,6 +102,7 @@ def run(
     screenshot_format: str,
     jpeg_quality: int,
     screenshot_timeout_ms: int,
+    show_inspect_url: bool,
     yutori_api_key: str | None,
     brd_cdp_url: str | None,
     env_file: Path | None,
@@ -115,6 +122,7 @@ def run(
             start_url=url,
             max_steps=max_steps,
             config=config,
+            show_inspect_url=show_inspect_url,
         )
     except RuntimeError as exc:
         print_error(str(exc))

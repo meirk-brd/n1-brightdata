@@ -106,5 +106,12 @@ def print_warning(message: str) -> None:
     console.print(f"[warning]{escape(message)}[/warning]")
 
 
+def print_inspect_url(url: str) -> None:
+    console.print(
+        f"[info]Inspect session:[/info] [url]{escape(url)}[/url]",
+        highlight=False,
+    )
+
+
 def status_spinner(message: str) -> "Console.status":
     return console.status(message, spinner="dots")

@@ -202,6 +202,7 @@ n1-brightdata [TASK] [OPTIONS]
 | `--screenshot-format` | `jpeg` \| `png` | `jpeg` | Format of screenshots sent to the model |
 | `--jpeg-quality` | integer | `60` | JPEG quality when format is `jpeg` (1–100) |
 | `--screenshot-timeout-ms` | integer | `90000` | Screenshot timeout in milliseconds |
+| `--show-inspect-url` | flag | `false` | Print a DevTools inspect URL for the live session |
 | `--yutori-api-key` | string | *(env)* | Yutori API key (overrides env / .env) |
 | `--brd-cdp-url` | string | *(env)* | Bright Data CDP WebSocket URL (overrides env / .env) |
 | `--env-file` | path | `./.env` | Custom path to a `.env` credentials file |
