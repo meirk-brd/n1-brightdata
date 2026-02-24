@@ -18,6 +18,7 @@ from .console import (
     print_config_summary,
     print_done,
     print_early_stop,
+    print_error,
     print_final_answer,
     print_step,
     print_tool_action,
@@ -30,6 +31,7 @@ DEFAULT_VIEWPORT_W = 1280
 DEFAULT_VIEWPORT_H = 800
 DEFAULT_SCREENSHOT_FORMAT = "jpeg"
 DEFAULT_JPEG_QUALITY = 60
+DEFAULT_SCREENSHOT_TIMEOUT_MS = 90_000
 DEFAULT_ENABLE_SUFFICIENCY_CHECK = True
 DEFAULT_STOP_CONFIDENCE_THRESHOLD = 0.78
 
@@ -39,7 +41,9 @@ BROWSER_AGENT_SYSTEM_PROMPT = (
     "Stop as soon as the user task can be answered with reasonable confidence.\n"
     "Do not perform redundant confirmation passes once the key answer is established.\n"
     "Before every tool call, ask: what exact missing fact will this retrieve?\n"
-    "If no concrete missing fact exists, return a final answer and do not call tools."
+    "If no concrete missing fact exists, return a final answer and do not call tools.\n"
+    "When you see '[Steps remaining: N]' in a message and N <= 3, stop browsing immediately "
+    "and compile all gathered information into a complete final answer without calling any tools."
 )
 
 
@@ -54,6 +58,7 @@ class AgentConfig:
     keep_recent_screenshots: int = DEFAULT_KEEP_RECENT_SCREENSHOTS
     screenshot_format: str = DEFAULT_SCREENSHOT_FORMAT
     jpeg_quality: int = DEFAULT_JPEG_QUALITY
+    screenshot_timeout_ms: int = DEFAULT_SCREENSHOT_TIMEOUT_MS
     enable_sufficiency_check: bool = DEFAULT_ENABLE_SUFFICIENCY_CHECK
     stop_confidence_threshold: float = DEFAULT_STOP_CONFIDENCE_THRESHOLD
 
@@ -66,6 +71,11 @@ class AgentConfig:
             self,
             "keep_recent_screenshots",
             max(1, int(self.keep_recent_screenshots)),
+        )
+        object.__setattr__(
+            self,
+            "screenshot_timeout_ms",
+            max(1, int(self.screenshot_timeout_ms)),
         )
         threshold = float(self.stop_confidence_threshold)
         if threshold < 0.0:
@@ -195,6 +205,7 @@ def build_agent_config(
     brd_cdp_url: str | None = None,
     screenshot_format: str | None = None,
     jpeg_quality: int | None = None,
+    screenshot_timeout_ms: int | None = None,
     max_request_bytes: int | None = None,
     keep_recent_screenshots: int | None = None,
     model: str = DEFAULT_MODEL,
@@ -222,6 +233,11 @@ def build_agent_config(
         jpeg_quality=jpeg_quality
         if jpeg_quality is not None
         else _get_optional_env_int("N1_JPEG_QUALITY", DEFAULT_JPEG_QUALITY),
+        screenshot_timeout_ms=screenshot_timeout_ms
+        if screenshot_timeout_ms is not None
+        else _get_optional_env_int(
+            "N1_SCREENSHOT_TIMEOUT_MS", DEFAULT_SCREENSHOT_TIMEOUT_MS
+        ),
         enable_sufficiency_check=enable_sufficiency_check
         if enable_sufficiency_check is not None
         else _get_optional_env_bool(
@@ -247,6 +263,7 @@ def screenshot_b64(page: Any, config: AgentConfig) -> str:
     screenshot_kwargs = {"type": config.screenshot_format}
     if config.screenshot_format == "jpeg":
         screenshot_kwargs["quality"] = config.jpeg_quality
+    screenshot_kwargs["timeout"] = config.screenshot_timeout_ms
     img_bytes = page.screenshot(**screenshot_kwargs)
     return base64.b64encode(img_bytes).decode("utf-8")
 
@@ -521,6 +538,43 @@ def _tool_args_summary(tool_name: str, args: dict[str, Any]) -> str:
     return ""
 
 
+def _force_finalize(
+    *,
+    messages: list[dict[str, Any]],
+    client: OpenAI,
+    config: AgentConfig,
+    task: str,
+) -> None:
+    """Called when max_steps is exhausted. Asks the model to synthesize a final answer
+    from everything gathered so far, without calling any more tools."""
+    synthesis_messages = messages + [
+        {
+            "role": "user",
+            "content": (
+                "You have reached the maximum number of browsing steps. "
+                "Do NOT call any tools. "
+                "Based solely on everything you have observed so far, "
+                "compile and return a complete final answer to the original task:\n\n"
+                f"{task}"
+            ),
+        }
+    ]
+
+    try:
+        with status_spinner("Synthesizing final answer..."):
+            resp = n1_step(synthesis_messages, client=client, config=config)
+        msg = _first_choice_message(resp, context="Force-finalize response")
+        answer = _content_to_text(msg.content)
+        if answer:
+            print_final_answer(answer)
+        else:
+            print_error("Agent exhausted all steps and could not produce a final answer.")
+    except Exception as exc:
+        print_error(f"Failed to synthesize final answer: {exc}")
+
+    print_done()
+
+
 def run_agent(
     *,
     task: str,
@@ -550,7 +604,7 @@ def run_agent(
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": task},
+                    {"type": "text", "text": f"[Steps remaining: {max_steps}]\n{task}"},
                     {
                         "type": "image_url",
                         "image_url": {"url": f"data:{config.image_mime};base64,{b64}"},
@@ -559,7 +613,9 @@ def run_agent(
             }
         ]
 
+        completed = False
         for step in range(1, max_steps + 1):
+            remaining = max_steps - step
             with status_spinner(f"Step {step}/{max_steps} Thinking..."):
                 resp = n1_step(messages, client=client, config=config)
             msg = _first_choice_message(resp, context=f"Agent step {step} response")
@@ -572,6 +628,7 @@ def run_agent(
                 if assistant_text:
                     print_final_answer(assistant_text)
                 print_done()
+                completed = True
                 break
 
             final_answer = maybe_finalize_early(
@@ -584,6 +641,7 @@ def run_agent(
                 print_early_stop()
                 print_final_answer(final_answer)
                 print_done()
+                completed = True
                 break
 
             messages.append(
@@ -606,7 +664,10 @@ def run_agent(
                         "role": "tool",
                         "tool_call_id": tc.id,
                         "content": [
-                            {"type": "text", "text": f"Current URL: {page.url}"},
+                            {
+                                "type": "text",
+                                "text": f"[Steps remaining: {remaining}]\nCurrent URL: {page.url}",
+                            },
                             {
                                 "type": "image_url",
                                 "image_url": {
@@ -616,6 +677,9 @@ def run_agent(
                         ],
                     }
                 )
+
+        if not completed:
+            _force_finalize(messages=messages, client=client, config=config, task=task)
 
         browser.close()
 

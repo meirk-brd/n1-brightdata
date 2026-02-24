@@ -149,6 +149,7 @@ Tuning parameters stay in a local `.env` file or shell environment — they are 
 # .env  (in your project directory, or export in your shell)
 N1_SCREENSHOT_FORMAT=jpeg          # jpeg | png
 N1_JPEG_QUALITY=60                 # 1–100
+N1_SCREENSHOT_TIMEOUT_MS=90000     # screenshot timeout in milliseconds
 N1_MAX_REQUEST_BYTES=9500000       # trim old screenshots if payload exceeds this
 N1_KEEP_RECENT_SCREENSHOTS=6       # how many screenshots to keep in context
 N1_ENABLE_SUFFICIENCY_CHECK=true   # stop early when the agent is confident
@@ -200,6 +201,7 @@ n1-brightdata [TASK] [OPTIONS]
 | `--max-steps` | integer | `30` | Maximum number of browser actions (min: 1) |
 | `--screenshot-format` | `jpeg` \| `png` | `jpeg` | Format of screenshots sent to the model |
 | `--jpeg-quality` | integer | `60` | JPEG quality when format is `jpeg` (1–100) |
+| `--screenshot-timeout-ms` | integer | `90000` | Screenshot timeout in milliseconds |
 | `--yutori-api-key` | string | *(env)* | Yutori API key (overrides env / .env) |
 | `--brd-cdp-url` | string | *(env)* | Bright Data CDP WebSocket URL (overrides env / .env) |
 | `--env-file` | path | `./.env` | Custom path to a `.env` credentials file |

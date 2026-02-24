@@ -63,6 +63,13 @@ def main() -> None:
     help="JPEG quality used when --screenshot-format=jpeg.",
 )
 @click.option(
+    "--screenshot-timeout-ms",
+    type=click.IntRange(min=1),
+    default=90_000,
+    show_default=True,
+    help="Timeout for Playwright page screenshots in milliseconds.",
+)
+@click.option(
     "--yutori-api-key",
     envvar="YUTORI_API_KEY",
     show_envvar=True,
@@ -88,6 +95,7 @@ def run(
     max_steps: int,
     screenshot_format: str,
     jpeg_quality: int,
+    screenshot_timeout_ms: int,
     yutori_api_key: str | None,
     brd_cdp_url: str | None,
     env_file: Path | None,
@@ -100,6 +108,7 @@ def run(
             brd_cdp_url=brd_cdp_url,
             screenshot_format=screenshot_format,
             jpeg_quality=jpeg_quality,
+            screenshot_timeout_ms=screenshot_timeout_ms,
         )
         run_agent(
             task=task,
