@@ -12,7 +12,7 @@
 
 # n1-brightdata
 
-### An autonomous web research agent powered by **Yutori n1** and **Bright Data Scraping Browser**
+### An autonomous web research agent powered by **Yutori n1** and **Bright Data Browser API**
 
 Give it a task. It browses the web. It brings back answers.
 
