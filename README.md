@@ -325,6 +325,6 @@ MIT © [Bright Data](https://brightdata.com)
 
 <br />
 
-*Built with [Bright Data Scraping Browser](https://brightdata.com/products/scraping-browser) + [Yutori n1](https://yutori.com)*
+*Built with [Bright Data Browser API](https://brightdata.com/products/scraping-browser) + [Yutori n1](https://yutori.com)*
 
 </div>
